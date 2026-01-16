@@ -1,0 +1,53 @@
+name: Validate Member PR
+
+on:
+  pull_request:
+    paths:
+      - 'data/members.json'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate JSON
+        run: |
+          if ! jq empty data/members.json; then
+            echo "❌ Invalid JSON format in members.json"
+            exit 1
+          fi
+          echo "✅ JSON is valid"
+
+      - name: Check required fields
+        run: |
+          node -e "
+          const members = require('./data/members.json');
+          const required = ['name', 'github', 'quote', 'gender'];
+          let valid = true;
+          
+          members.forEach((member, i) => {
+            required.forEach(field => {
+              if (!member[field]) {
+                console.log(\`❌ Member ${i + 1} missing '${field}'\`);
+                valid = false;
+              }
+            });
+          });
+          
+          if (!valid) process.exit(1);
+          console.log('✅ All members have required fields');
+          "
+
+      - name: Comment on PR
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '✅ All checks passed! Your entry looks good. A maintainer will review and merge soon.'
+            })

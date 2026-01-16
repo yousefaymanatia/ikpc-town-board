@@ -1,0 +1,83 @@
+name: Auto Merge PR
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'data/members.json'
+
+jobs:
+  auto-merge:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: write
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for conflicts
+        id: conflict-check
+        run: |
+          git fetch origin main
+          if git merge-base --is-ancestor origin/main HEAD; then
+            echo "no_conflict=true" >> $GITHUB_OUTPUT
+          else
+            if git merge --no-commit --no-ff origin/main; then
+              git merge --abort
+              echo "no_conflict=true" >> $GITHUB_OUTPUT
+            else
+              git merge --abort
+              echo "no_conflict=false" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+      - name: Auto-approve and merge
+        if: steps.conflict-check.outputs.no_conflict == 'true'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const pr = context.payload.pull_request;
+            
+            // Auto-approve
+            await github.rest.pulls.createReview({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr.number,
+              event: 'APPROVE',
+              body: '🎉 Welcome to the IKPC Town Board! Your entry has been automatically approved.'
+            });
+            
+            // Auto-merge
+            await github.rest.pulls.merge({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr.number,
+              merge_method: 'squash',
+              commit_title: `Add ${pr.user.login} to town board`,
+              commit_message: `Merged PR #${pr.number} from @${pr.user.login}`
+            });
+            
+            // Comment
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.number,
+              body: `🎉 **Merged!** Welcome to the town, @${pr.user.login}! Your avatar is now live on the board. You're officially a contributor! 🏘️`
+            });
+
+      - name: Comment on conflict
+        if: steps.conflict-check.outputs.no_conflict == 'false'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '⚠️ Merge conflict detected. Please pull the latest changes from main and resolve conflicts:\n\n```bash\ngit fetch origin main\ngit rebase origin/main\n```'
+            })
